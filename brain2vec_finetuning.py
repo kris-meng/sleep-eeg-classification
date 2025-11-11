@@ -366,7 +366,7 @@ def bandpass_fir_filter(eeg_signal, fs, bands, numtaps=501):
 
 
 # Example usage:
-fs = 250  # sampling frequency in Hz
+#fs = 250  # sampling frequency in Hz
 bands = [(0, 3), (3, 7), (7, 13), (13, 20), (20, 30), (30, 90), (90, 125)]
 
 # Example EEG signal
