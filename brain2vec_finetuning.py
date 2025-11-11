@@ -24,6 +24,7 @@ from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 import argparse
+import subprocess
 import transformers
 import numpy as np
 from accelerate import Accelerator
@@ -958,6 +959,7 @@ if 'pd' in args.model_pathway and os.path.exists(output_dir):
 
 completed_steps = 0
 starting_epoch = 0
+best_f1 = 0.0
 if not args.feature_ext == 'cnn_frozen':
     model.initialize_feature_encoder()
 
@@ -1199,7 +1201,15 @@ for epoch in range(starting_epoch, num_train_epochs):
         "val_f1_R": f1_per_class[4],
         "val_ck": ck,
     }
-    save_metrics(args.vers, epoch, val_metrics=val_metrics)
+    if val_metrics["val_f1_weighted"] > best_f1:
+        best_f1 = val_metrics["val_f1_weighted"]
+        best_epoch = epoch
+        print(best_epoch, flush=True)
+        # Save labels only for best epoch
+        best_val_metrics = {**val_metrics,
+                            "val_predictions": torch.cat(y_predict).cpu().tolist(),
+                            "val_true_labels": eeg_dataset["validation_label"].tolist()}
+    #save_metrics(args.vers, epoch, val_metrics=val_metrics)
     val_logs[f"val_f1_weighted_{patient_name}"]=f1_w
     val_logs[f"val_f1_macro_{patient_name}"]=f1_m
     val_logs[f"val_ck_{patient_name}"]=ck
@@ -1221,31 +1231,32 @@ for epoch in range(starting_epoch, num_train_epochs):
     del f1_w, f1_m, ck, f1_per_class
     gc.collect()
     torch.cuda.empty_cache()
-    # Label names corresponding to 0,1,2,3,4
-    labels = ['W', 'N1', 'N2', 'N3', 'R']
-    # Compute confusion matrix
-    y_true_flat = eeg_dataset["validation_label"]
-    y_predict_flat = torch.cat(y_predict).cpu().numpy()
-    cm = confusion_matrix(y_true_flat, y_predict_flat , normalize='true')
-    # Plot confusion matrix
-    plt.figure(figsize=(6, 5))
-    sns.heatmap(cm, annot=True, fmt=".2f", cmap='Greys',
-                xticklabels=labels, yticklabels=labels,
-                vmin=0, vmax=1)
+    ## Label names corresponding to 0,1,2,3,4
+    #labels = ['W', 'N1', 'N2', 'N3', 'R']
+    ## Compute confusion matrix
+    #y_true_flat = eeg_dataset["validation_label"]
+    #y_predict_flat = torch.cat(y_predict).cpu().numpy()
+    #cm = confusion_matrix(y_true_flat, y_predict_flat , normalize='true')
+    ## Plot confusion matrix
+    #plt.figure(figsize=(6, 5))
+    #sns.heatmap(cm, annot=True, fmt=".2f", cmap='Greys',
+    #            xticklabels=labels, yticklabels=labels,
+    #            vmin=0, vmax=1)
 
-    plt.xlabel('Predicted Label')
-    plt.ylabel('True Label')
-    plt.title(f'{patient_name}, Epoch: {epoch} Val Acc Mean: {np.mean(y_true_flat == y_predict_flat):.3f}') #F1 Median: {y_f1_flat}
-    plt.tight_layout()
+    #plt.xlabel('Predicted Label')
+    #plt.ylabel('True Label')
+    #plt.title(f'{patient_name}, Epoch: {epoch} Val Acc Mean: {np.mean(y_true_flat == y_predict_flat):.3f}') #F1 Median: {y_f1_flat}
+    #plt.tight_layout()
 
-    # Save the plot
-    plt.savefig(f'/home/mengkris/links/scratch/ehb_runs/den_{epoch}_{args.vers}_val_matrix.png', dpi=300)
-    plt.close()
+    ## Save the plot
+    #plt.savefig(f'/home/mengkris/links/scratch/ehb_runs/den_{epoch}_{args.vers}_val_matrix.png', dpi=300)
+    #plt.close()
     y_predict.clear()
-    del cm, y_predict, val_metrics, val_logs
+    del val_metrics, val_logs, y_predict # ,cm
 
 best_epoch = val_log[f"val_f1_weighted_{patient_name}"].index(max(val_log[f"val_f1_weighted_{patient_name}"]))
 print(best_epoch, max(val_log[f"val_f1_weighted_{patient_name}"]), flush = True)
+save_metrics(args.vers, best_epoch, val_metrics=best_val_metrics)
 best_checkpoint_dir = os.path.join(args.output_dir, f"checkpoint-epoch_{best_epoch}")
 best_model = Wav2Vec2ForSequenceClassification.from_pretrained(best_checkpoint_dir)
 best_model.to('cuda')
@@ -1288,7 +1299,12 @@ f1_m = f1_score(eeg_dataset["test_label"], torch.cat(test_predict).cpu().numpy()
 f1_per_class = f1_score(eeg_dataset["test_label"], torch.cat(test_predict).cpu().numpy(), average=None, labels=[0,1,2,3,4])
 print(f"F1 per class: {f1_per_class}", flush=True)
 ck = cohen_kappa_score(eeg_dataset["test_label"], torch.cat(test_predict).cpu().numpy(), labels=[0, 1, 2, 3, 4])
-
+def get_commit_hash():
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"]).decode().strip()
+    except:
+        return "unknown"
+commit_hash = get_commit_hash()
 test_metrics = {
     "test_f1_weighted": f1_w,
     "test_f1_macro": f1_m,
@@ -1299,7 +1315,8 @@ test_metrics = {
     "test_f1_N3": f1_per_class[3],
     "test_f1_R": f1_per_class[4],
     "test_pred": torch.cat(test_predict).cpu().tolist(),
-    "true_label": eeg_dataset["test_label"].tolist()
+    "true_label": eeg_dataset["test_label"].tolist(),
+    "git_version":commit_hash
 }
 save_metrics(args.vers, best_epoch, test_metrics=test_metrics)
 
@@ -1319,26 +1336,27 @@ del f1_w, f1_m, ck, f1_per_class, test_log
 gc.collect()
 torch.cuda.empty_cache()
 
-test_true_flat = eeg_dataset["test_label"]
-test_predict_flat = torch.cat(test_predict).cpu().numpy()
+#test_true_flat = eeg_dataset["test_label"]
+#test_predict_flat = torch.cat(test_predict).cpu().numpy()
 
-cm = confusion_matrix(test_true_flat, test_predict_flat , normalize='true')
-# Plot confusion matrix
-plt.figure(figsize=(6, 5))
-sns.heatmap(cm, annot=True, fmt=".2f", cmap='Greys',
-            xticklabels=labels, yticklabels=labels,
-            vmin=0, vmax=1)
+#cm = confusion_matrix(test_true_flat, test_predict_flat , normalize='true')
+## Plot confusion matrix
+#plt.figure(figsize=(6, 5))
+#sns.heatmap(cm, annot=True, fmt=".2f", cmap='Greys',
+#            xticklabels=labels, yticklabels=labels,
+#            vmin=0, vmax=1)
 
-plt.xlabel('Predicted Label')
-plt.ylabel('True Label')
-plt.title(f'{patient_name}, Epoch: {best_epoch} Test Acc Mean: {np.mean(test_true_flat == test_predict_flat):.3f}') #F1 Median: {y_f1_flat}
-plt.tight_layout()
+#plt.xlabel('Predicted Label')
+#plt.ylabel('True Label')
+#plt.title(f'{patient_name}, Epoch: {best_epoch} Test Acc Mean: {np.mean(test_true_flat == test_predict_flat):.3f}') #F1 Median: {y_f1_flat}
+#plt.tight_layout()
 
 # Save the plot
-plt.savefig(f'/home/mengkris/links/scratch/ehb_runs/TEST_{best_epoch}_{args.vers}_test_matrix.png', dpi=300)
-plt.close()
+#plt.savefig(f'/home/mengkris/links/scratch/ehb_runs/TEST_{best_epoch}_{args.vers}_test_matrix.png', dpi=300)
+#plt.close()
 
-del cm, test_predict
+
+#del cm, test_predict
 
 
 
