@@ -22,7 +22,7 @@ from configuration import Config
 class CNNFeatureExtractor(nn.Module):
     def __init__(self, config, layer_id = 0, max_chan = 164):
         super().__init__()
-        self.in_conv_dim = config.conv_dim[layer_id - 1] if layer_id > 0 else 1
+        self.in_conv_dim = config.conv_dim[layer_id - 1] if layer_id > 0 else config.input_dim
         self.out_conv_dim = config.conv_dim[layer_id]
         self.max_c = max_chan
         self.conv = nn.Conv1d(
@@ -37,6 +37,8 @@ class CNNFeatureExtractor(nn.Module):
 
     def forward(self, hidden_states):
         hidden_states = hidden_states.float()
+        if len(hidden_states.size()) == 4:
+            hidden_states = hidden_states.squeeze()
         hidden_states = self.conv(hidden_states)  # (B, out_conv_dim, H, W)
         hidden_states = self.layer_norm(hidden_states)
         hidden_states = self.activation(hidden_states)

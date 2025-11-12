@@ -128,6 +128,7 @@ class Config(PretrainedConfig):
         vocab_size=64,
         hidden_size=768,
         intermediate_size=3072,
+        input_dim=1,
         hidden_dropout=0.1,
         activation_dropout=0.1,
         attention_dropout=0.1,
@@ -200,6 +201,7 @@ class Config(PretrainedConfig):
         self.num_conv_pos_embedding_groups = num_conv_pos_embedding_groups
         self.num_feat_extract_layers = len(self.conv_dim)
         self.intermediate_size = intermediate_size
+        self.input_dim = input_dim
         self.hidden_dropout = hidden_dropout
         self.attention_dropout = attention_dropout
         self.activation_dropout = activation_dropout

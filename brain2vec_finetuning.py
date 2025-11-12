@@ -330,7 +330,7 @@ def stft_transform(dataset, fs, mode='no_band', window_size=2, overlap=1):
 import numpy as np
 from scipy.signal import firwin, filtfilt
 
-def bandpass_fir_filter(eeg_signal, fs, bands, numtaps=501):
+def bandpass_fir_filter(eeg_signal, fs, bands, transition_bw=1.0):
     """
     Bandpass filter EEG signal into multiple frequency bands using FIR filters.
 
@@ -344,30 +344,43 @@ def bandpass_fir_filter(eeg_signal, fs, bands, numtaps=501):
         filtered_dict (dict): Dictionary of filtered and normalized signals per band.
         cnn_input (np.ndarray): Stacked array of shape (num_bands, signal_length).
     """
-    filtered_dict = {}
-    for i, (low, high) in enumerate(bands):
-        # Avoid zero cutoff (FIR requires >0 for highpass edge)
-        low = max(low, 0.001)
+    bandpassed = []
+    #bandies = []
+    # Compute numtaps adaptively (rule of thumb)
+    numtaps = int(4 * fs / transition_bw)
+    numtaps =  min(numtaps, 501)
+    # Make it odd for filtfilt stability
+    if numtaps % 2 == 0:
+        numtaps += 1
+    for sample in eeg_signal:
+        band = []
+        for i, (low, high) in enumerate(bands):
+            # Avoid zero cutoff (FIR requires >0 for highpass edge)
+            #low = max(low, 0.5)
 
-        # Design FIR bandpass filter
-        b = firwin(numtaps=numtaps, cutoff=[low, high], pass_zero=False, fs=fs)
+            # Design FIR bandpass filter
+            b = firwin(numtaps=numtaps, cutoff=[low, high], pass_zero=False, fs=fs)
+            # Apply zero-phase filtering
+            filtered = filtfilt(b, [1.0], sample['input_values'])
 
-        # Apply zero-phase filtering
-        filtered = filtfilt(b, [1.0], eeg_signal)
+            # Min-Max normalization to [-1, 1] - EQUAL SCALE FOR ALL BANDS
+            min_val = np.min(filtered)
+            max_val = np.max(filtered)
+            if max_val - min_val > 1e-8:
+                filtered = 2 * (filtered - min_val) / (max_val - min_val) - 1
+            else:
+                filtered = np.zeros_like(filtered)
 
-        # Normalize each band (zero mean, unit variance)
-        filtered = (filtered - np.mean(filtered)) / (np.std(filtered) + 1e-8)
+            band.append(filtered)
+        bandpassed.append({'input_values': band})
+        #bandies.append(band)
+        #plot_bands_and_original(sample['input_values'], bandies, bands)
 
-        filtered_dict[f'band_{i+1}_{low}-{high}Hz'] = filtered
-
-    # Stack into shape (num_bands, signal_length)
-    cnn_input = np.stack(list(filtered_dict.values()), axis=0)
-    return filtered_dict, cnn_input
-
+    return np.array(bandpassed)
 
 # Example usage:
 #fs = 250  # sampling frequency in Hz
-bands = [(0, 3), (3, 7), (7, 13), (13, 20), (20, 30), (30, 90), (90, 125)]
+bands = [(0.5, 3), (3, 7), (7, 13), (13, 20), (20, 30), (30, 90), (90, 120)]
 
 # Example EEG signal
 # eeg_signal = np.load('eeg_sample.npy')  # or any 1D numpy array
@@ -458,6 +471,10 @@ if args.feature_ext == 'stft': # or data length stuff
     trainy= stft_transform(trainy, fs)
     #validation, validation_label = stft_transform(validation), validation_label
     test = stft_transform(test, fs)
+
+elif args.feature_ext == 'bandpass':
+    trainy = bandpass_fir_filter(trainy,fs,bands)
+    test = bandpass_fir_filter(test, fs, bands)
 
 if args.mission =='next':
     trainy = np.array(custom_segments(trainy, args.data_length, None, window_size=30, key="input_values"))
@@ -607,6 +624,9 @@ if 'none' in args.model_pathway or 'r_d' in args.model_pathway or 'pd' in args.m
         config.mask_time_length=1 
         config.conv_dim = (251,251,251)
     else:
+        if args.feature_ext == 'bandpass':
+            config.input_dim = 7
+            config.deconv_dim[-1] = 7
         L = data_len * freq
         for k, s in zip(config.conv_kernel, config.conv_stride): L = conv1d_output_length(L, k, s, 0)
         config.max_source_positions = L
